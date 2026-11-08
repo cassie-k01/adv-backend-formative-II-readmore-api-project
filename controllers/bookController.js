@@ -105,9 +105,84 @@ const createBook = async (req, res) => {
 };
 
 // GET /books
+// Rule 5: optional filters, search and sorting. The filter object is built
+// dynamically, so only the parameters that are actually present are applied.
+// With no parameters the filter stays {} and every book is returned.
 const getBooks = async (req, res) => {
   try {
-    const books = await Book.find().populate("author");
+    const { genre, minPrice, maxPrice, author, search, sort, order } = req.query;
+
+    // A parameter counts as present only if it is not missing or empty
+    const has = (value) => value !== undefined && value !== "";
+
+    // Text parameters must be plain strings (blocks ?genre[]=a and ?genre[$ne]=a)
+    const textParams = { genre, author, search, sort, order };
+    for (const [name, value] of Object.entries(textParams)) {
+      if (has(value) && typeof value !== "string") {
+        return res.status(400).json({ message: `${name} must be a single text value` });
+      }
+    }
+
+    const filter = {};
+
+    // genre: only books of that genre (case-insensitive exact match)
+    if (has(genre)) {
+      filter.genre = new RegExp("^" + escapeRegex(genre.trim()) + "$", "i");
+    }
+
+    // author: only books by that author id
+    if (has(author)) {
+      if (!mongoose.isValidObjectId(author)) {
+        return res.status(400).json({ message: "author must be a valid author id" });
+      }
+      filter.author = author;
+    }
+
+    // search: title contains this text (case-insensitive)
+    if (has(search)) {
+      filter.title = new RegExp(escapeRegex(search.trim()), "i");
+    }
+
+    // minPrice / maxPrice: either, both, or neither. Both share one "price"
+    // object: { $gte: min }, { $lte: max } or { $gte: min, $lte: max }.
+    if (has(minPrice) || has(maxPrice)) {
+      filter.price = {};
+      if (has(minPrice)) {
+        const min = toNumber(minPrice);
+        if (!Number.isFinite(min)) {
+          return res.status(400).json({ message: "minPrice must be a number" });
+        }
+        filter.price.$gte = min;
+      }
+      if (has(maxPrice)) {
+        const max = toNumber(maxPrice);
+        if (!Number.isFinite(max)) {
+          return res.status(400).json({ message: "maxPrice must be a number" });
+        }
+        filter.price.$lte = max;
+      }
+    }
+
+    // sort + order: only these fields are allowed, ascending by default
+    let sortSpec = null;
+    if (has(order) && !["asc", "desc"].includes(order)) {
+      return res.status(400).json({ message: "order must be asc or desc" });
+    }
+    if (has(sort)) {
+      const allowed = ["price", "title", "publishedYear"];
+      if (!allowed.includes(sort)) {
+        return res.status(400).json({ message: `sort must be one of: ${allowed.join(", ")}` });
+      }
+      sortSpec = { [sort]: order === "desc" ? -1 : 1 };
+    }
+
+    let query = Book.find(filter).populate("author");
+    if (sortSpec) {
+      // strength 2 makes title sorting ignore case ("apple" next to "Apple")
+      query = query.sort(sortSpec).collation({ locale: "en", strength: 2 });
+    }
+
+    const books = await query;
     res.json(books);
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
