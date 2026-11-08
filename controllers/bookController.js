@@ -105,12 +105,12 @@ const createBook = async (req, res) => {
 };
 
 // GET /books
-// Rule 5: optional filters, search and sorting. The filter object is built
+// Rule 5 + pagination: optional filters, search, sorting and paging. The filter object is built
 // dynamically, so only the parameters that are actually present are applied.
 // With no parameters the filter stays {} and every book is returned.
 const getBooks = async (req, res) => {
   try {
-    const { genre, minPrice, maxPrice, author, search, sort, order } = req.query;
+    const { genre, minPrice, maxPrice, author, search, sort, order, page, limit } = req.query;
 
     // A parameter counts as present only if it is not missing or empty
     const has = (value) => value !== undefined && value !== "";
@@ -163,8 +163,10 @@ const getBooks = async (req, res) => {
       }
     }
 
-    // sort + order: only these fields are allowed, ascending by default
-    let sortSpec = null;
+    // sort + order: only these fields are allowed, ascending by default.
+    // _id is always the final tie-breaker so pages stay stable: without it,
+    // books with equal prices could swap places between page 1 and page 2.
+    let sortSpec = { _id: 1 };
     if (has(order) && !["asc", "desc"].includes(order)) {
       return res.status(400).json({ message: "order must be asc or desc" });
     }
@@ -173,17 +175,30 @@ const getBooks = async (req, res) => {
       if (!allowed.includes(sort)) {
         return res.status(400).json({ message: `sort must be one of: ${allowed.join(", ")}` });
       }
-      sortSpec = { [sort]: order === "desc" ? -1 : 1 };
+      sortSpec = { [sort]: order === "desc" ? -1 : 1, _id: 1 };
     }
 
-    let query = Book.find(filter).populate("author");
-    if (sortSpec) {
-      // strength 2 makes title sorting ignore case ("apple" next to "Apple")
-      query = query.sort(sortSpec).collation({ locale: "en", strength: 2 });
-    }
+    // Pagination: bad or missing values fall back to the defaults, and the
+    // numbers are clamped (page at least 1, limit between 1 and 100)
+    let pageNum = parseInt(page, 10);
+    if (Number.isNaN(pageNum) || pageNum < 1) pageNum = 1;
+    let limitNum = parseInt(limit, 10);
+    if (Number.isNaN(limitNum)) limitNum = 10;
+    limitNum = Math.min(Math.max(limitNum, 1), 100);
 
-    const books = await query;
-    res.json(books);
+    // total uses the same filter, so it counts every match, not just this page.
+    // strength 2 makes title sorting ignore case ("apple" next to "Apple")
+    const [total, results] = await Promise.all([
+      Book.countDocuments(filter),
+      Book.find(filter)
+        .populate("author")
+        .sort(sortSpec)
+        .collation({ locale: "en", strength: 2 })
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum),
+    ]);
+
+    res.json({ page: pageNum, limit: limitNum, total, results });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
