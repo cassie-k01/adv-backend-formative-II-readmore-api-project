@@ -6,12 +6,14 @@ const {
   updateAuthor,
   deleteAuthor,
 } = require("../controllers/authorController");
+const { getBooksByAuthor } = require("../controllers/bookController");
 
 const router = express.Router();
 
 router.post("/", createAuthor);
 router.get("/", getAuthors);
 router.get("/:id", getAuthorById);
+router.get("/:id/books", getBooksByAuthor);
 router.put("/:id", updateAuthor);
 router.delete("/:id", deleteAuthor);
 
