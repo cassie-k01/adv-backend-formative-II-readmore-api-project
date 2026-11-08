@@ -98,10 +98,67 @@ const deleteAuthor = async (req, res) => {
   }
 };
 
+// GET /authors/:id/stats
+// Rule 6: a summary computed from this author's books by MongoDB itself.
+const getAuthorStats = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ message: "Invalid author id" });
+    }
+
+    const author = await Author.findById(id);
+    if (!author) {
+      return res.status(404).json({ message: "Author not found" });
+    }
+
+    // aggregate() does not cast strings to ObjectId like find() does,
+    // so the id is converted by hand. Sorting by price first means $first is
+    // the cheapest book and $last is the most expensive. _id breaks price ties.
+    const [stats] = await Book.aggregate([
+      { $match: { author: new mongoose.Types.ObjectId(id) } },
+      { $sort: { price: 1, _id: 1 } },
+      {
+        $group: {
+          _id: null,
+          bookCount: { $sum: 1 },
+          averagePrice: { $avg: "$price" },
+          cheapestBook: { $first: "$title" },
+          mostExpensiveBook: { $last: "$title" },
+        },
+      },
+    ]);
+
+    // No books means $group produces nothing. Sensible values instead of a
+    // crash: zero for the numbers, null (not a made-up string) for the titles.
+    if (!stats) {
+      return res.json({
+        author: author.name,
+        bookCount: 0,
+        averagePrice: 0,
+        cheapestBook: null,
+        mostExpensiveBook: null,
+      });
+    }
+
+    res.json({
+      author: author.name,
+      bookCount: stats.bookCount,
+      // round to two decimals so 21.499999 shows as 21.5
+      averagePrice: Math.round(stats.averagePrice * 100) / 100,
+      cheapestBook: stats.cheapestBook,
+      mostExpensiveBook: stats.mostExpensiveBook,
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
 module.exports = {
   createAuthor,
   getAuthors,
   getAuthorById,
   updateAuthor,
   deleteAuthor,
+  getAuthorStats,
 };
