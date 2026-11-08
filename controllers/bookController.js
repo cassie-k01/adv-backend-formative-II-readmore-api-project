@@ -2,6 +2,35 @@ const mongoose = require("mongoose");
 const Book = require("../models/Book");
 const Author = require("../models/Author");
 
+// Accepts real numbers and numeric strings like "21.5". Everything else
+// (letters, empty string, null, booleans, arrays) becomes NaN and is rejected.
+const toNumber = (value) => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "") return Number(value);
+  return NaN;
+};
+
+// Rule 3: rules the schema can't express. Returns an error message or null.
+// A field that is undefined is skipped, so on update only the fields present
+// in the body are checked. On create, a missing field is caught by the
+// schema's "required" check instead (400).
+const validatePriceAndYear = (price, year) => {
+  if (price !== undefined) {
+    const p = toNumber(price);
+    if (!Number.isFinite(p) || p <= 0) {
+      return "price must be a number greater than 0";
+    }
+  }
+  if (year !== undefined) {
+    const y = toNumber(year);
+    const currentYear = new Date().getFullYear();
+    if (!Number.isInteger(y) || y < 1450 || y > currentYear) {
+      return `publishedYear must be a whole year between 1450 and ${currentYear}`;
+    }
+  }
+  return null;
+};
+
 // Rule 1: no orphan books.
 // The schema's "required" only proves the field exists. A made-up id still has
 // the right format, so we look the author up. Returns an error message or null.
@@ -19,7 +48,12 @@ const getAuthorError = async (authorId) => {
 // POST /books
 const createBook = async (req, res) => {
   try {
-    // Rule 1 runs before Book.create, so nothing is saved when it fails
+    // Check order: 1) price and year (422), 2) author exists (400)
+    const ruleError = validatePriceAndYear(req.body.price, req.body.publishedYear);
+    if (ruleError) {
+      return res.status(422).json({ message: ruleError });
+    }
+
     const authorError = await getAuthorError(req.body.author);
     if (authorError) {
       return res.status(400).json({ message: authorError });
@@ -69,6 +103,12 @@ const updateBook = async (req, res) => {
     const { id } = req.params;
     if (!mongoose.isValidObjectId(id)) {
       return res.status(400).json({ message: "Invalid book id" });
+    }
+
+    // Rule 3 on update: only the fields present in the body are checked
+    const ruleError = validatePriceAndYear(req.body.price, req.body.publishedYear);
+    if (ruleError) {
+      return res.status(422).json({ message: ruleError });
     }
 
     // Rule 1 on update: only when the author is actually being changed
