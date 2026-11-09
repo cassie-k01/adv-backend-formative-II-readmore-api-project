@@ -2,8 +2,10 @@
   "name": "adv-backend-formative-ii-readmore-api-project",
   "version": "1.0.0",
   "description": "Your first backend API assignment. Build a small REST API for a bookstore using **Express.js**, with **MongoDB** as the database and **Mongoose** as the modelling layer.",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
